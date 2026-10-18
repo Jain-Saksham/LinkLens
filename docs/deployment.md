@@ -2,6 +2,16 @@
 
 LinkLens runs entirely on free tiers: **Render** (backend, cache, frontend) and **Neon** (PostgreSQL). Free tiers change, so the limits below are the ones verified on **2026-10-18**. Check them again before relying on them.
 
+## Live
+
+| | URL |
+|---|---|
+| App (UI) | https://linklens-app.onrender.com |
+| Short links, preview pages, API | https://linklens-4zuc.onrender.com (e.g. `/{code}`, `/{code}+`) |
+| Health | https://linklens-4zuc.onrender.com/actuator/health/readiness |
+
+The backend got the `-4zuc` suffix because `linklens.onrender.com` belongs to another account's (suspended) service.
+
 ## Production architecture
 
 ```
@@ -45,6 +55,16 @@ Sources: [Render free docs](https://render.com/docs/free), [Render pricing](http
 | Same budget | Render health check = `/actuator/health/liveness` | Liveness has no dependencies; readiness (with the DB) is separate. Frequent platform health checks never touch Neon. |
 | 512 MB RAM | `MaxRAMPercentage=65`, SerialGC | Measured 202 MB in use under the same limits locally |
 | 0.1 CPU | C1-only JIT + **Class Data Sharing** archive built into the image | Measured locally at `--cpus=0.1`: "Started" 133.6 s → 76.8 s; first answered request 145 s → 89 s |
+
+## Screenshots (production)
+
+| Home: live counter on a new link | Analytics + destination health |
+|---|---|
+| ![home](screenshots/prod-home.png) | ![analytics](screenshots/prod-analytics.png) |
+
+| Preview page `/{code}+` (dark) | Analytics on mobile |
+|---|---|
+| ![preview](screenshots/prod-preview-dark.png) | ![mobile](screenshots/prod-analytics-mobile.png) |
 
 ## Local setup
 
@@ -91,6 +111,58 @@ Set in `render.yaml`, except the three secrets.
 3. Wait for the first deploy. The backend image builds on Render, then Flyway creates the schema on Neon.
 4. If Render had to rename a service (the name was taken), update `APP_BASE_URL`, `CORS_ALLOWED_ORIGINS` and the static site's `VITE_*` to the real URLs, and redeploy.
 5. **Verify:** `scripts/smoke-test.sh https://linklens-4zuc.onrender.com https://linklens-app.onrender.com`, or GitHub → Actions → **Smoke test** → Run workflow.
+
+## Verification (production, 2026-10-18)
+
+All checks below were run against the live URLs. None are estimates.
+
+| Check | Result |
+|---|---|
+| `scripts/smoke-test.sh` (22 checks) | **22/22 passed**. Covers liveness/readiness, create (HTTPS short URL), 302 redirect, duplicate alias 409, invalid URL 400, unknown 404, bad period 400, expiring link 302 → 410, analytics + insights, health, preview with CSP, live SSE stream, persistence, CORS, frontend shell and SPA route fallback. |
+| UI end to end (headless Chrome) | Created a link in the UI; following it 3× updated the result card's live counter to "3 clicks"; analytics showed `news.ycombinator.com` 100% (host only) and destination health "Working" (title "Spring Boot", 308 → 200). |
+| Outbound checks from Render | `example.com` → HEALTHY with title; a link to `169.254.169.254` → **BLOCKED**, never fetched |
+| Rate limit vs a spoofed `X-Forwarded-For` | After the fix: remaining 19 → 18 → 17 → 16 across normal and spoofed requests (one bucket per real client) |
+| No lost clicks under load | Counter = **1,304** after exactly 1,304 redirects sent (smoke + timing + load tests) |
+| Persistence across sleep/wake | ✅ data intact after the instance slept and woke (see "Cold start") |
+
+## Fixed during deployment
+
+1. **Placeholder secret:** the first deploy failed with `UnknownHostException: <host from Neon>`, because `DB_URL` held the template text. Fixed in the Render dashboard.
+2. **Service name taken:** `linklens.onrender.com` serves another account's suspended app. Render assigned `linklens-4zuc`, and the frontend's API base and `APP_BASE_URL` were updated in `render.yaml`.
+3. **Rate-limit bypass (security):** behind Render's Cloudflare edge, a client-supplied `X-Forwarded-For` was passed through, so a spoofed header gave a fresh token bucket. The limiter now keys on `CF-Connecting-IP` (`CLIENT_IP_HEADER`). Re-verified live.
+4. **Timestamp precision (found by CI on Linux):** nanosecond `Instant.now()` versus PostgreSQL's microseconds meant API timestamps changed between create and read. The app clock now ticks in microseconds.
+5. **`/favicon.ico` 404s** on every preview view (the browser asked the short-link domain). The icon is now inlined.
+
+## Performance (production)
+
+Measured from India (Delhi Cloudflare edge → Render Singapore) with ApacheBench over HTTPS + keep-alive, one load generator, after a 50-request warmup. Kept deliberately small: it's a shared free tier.
+
+| Scenario | concurrency | requests | req/s | mean ms | p50 | p90 | p99 | max | errors |
+|---|---|---|---|---|---|---|---|---|---|
+| redirect (302) | 1 | 200 | 11 | 93.2 | 90 | 101 | 132 | 171 | 0 |
+| redirect (302) | 8 | 1,000 | **37** | 217.6 | 197 | 380 | 806 | 1,698 | 0 |
+| unknown code (404) | 8 | 500 | 45 | 177.0 | 150 | 205 | 303 | 3,128 | 0 |
+| analytics, 30 days (200) | 4 | 200 | 19 | 208.9 | 158 | 209 | 1,106 | 3,165 | 0 |
+| preview page (200) | 4 | 200 | 23 | 171.3 | 136 | 151 | 2,182 | 3,149 | 0 |
+
+Single requests (average of 3): a liveness probe took 0.124 s and a redirect 0.125 s end to end; TLS took ~0.024 s with a reused connection.
+
+How to read these numbers:
+- **Network dominates single requests.** A no-op liveness check costs the same as a redirect, so server time is a few ms out of ~120.
+- **0.1 CPU is the throughput ceiling.** About 37–45 req/s means roughly 2–3 ms of CPU per request, which saturates a tenth of a core. Locally the same code serves 82k redirects/s (performance.md); the difference is the instance size, not the design.
+- **Tail latency** (p99 ~1–2 s, max ~3 s) comes from CPU throttling on the shared instance and sometimes from Neon waking up.
+
+## Cold start
+
+Measured on 2026-10-18 after the backend had received no traffic for about 30 minutes (Render spins free instances down after 15):
+
+| Measurement | Result |
+|---|---|
+| First request after idle (a redirect) | **77.7 s**: Render waking the instance, then the JVM starting on 0.1 CPU |
+| Next three requests | 0.28–0.30 s each |
+| Data after the sleep/wake cycle | Demo link: 7 clicks (3 from the UI test + 4 from this probe) and still HEALTHY; load-test link: still 1,304 clicks; expired link: still 410 |
+
+So data persists across restarts (it lives in Neon, not in the container). A cold start costs a little over a minute. The Class Data Sharing archive is what keeps it there: at a simulated 0.1 CPU locally, startup went from 133.6 s to 76.8 s with it.
 
 ## Operations
 

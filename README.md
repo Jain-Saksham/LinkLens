@@ -12,6 +12,10 @@ What sets it apart from typical shorteners:
 - **A transparent preview.** Add `+` to any short link (`/docs+`) to see where it really goes before visiting: final URL after redirects, page title, HTTPS, health, expiry.
 - **A live click counter.** Watch clicks arrive in real time (Server-Sent Events).
 
+**Live:** https://linklens-app.onrender.com · short links on https://linklens-4zuc.onrender.com (free tier: the first visit after 15 idle minutes waits for a cold start; see [docs/deployment.md](docs/deployment.md)).
+
+![LinkLens analytics in production](docs/screenshots/prod-analytics.png)
+
 | Part | Stack |
 |---|---|
 | `backend/` | Java 21, Spring Boot 3.5, Maven, PostgreSQL + Flyway, Redis (optional cache) |

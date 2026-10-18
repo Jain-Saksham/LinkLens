@@ -83,6 +83,10 @@ After the change, the counter on the test link equalled its event rows exactly (
 
 `autocannon` (Node.js) was tried first. It reported 44k req/s with a 70 ms median latency on 32 connections. Little's law (throughput ≈ concurrency ÷ latency) says that's impossible: 32 ÷ 0.070 s ≈ 457 req/s. Even at a gentle fixed 2,000 req/s it reported ~450 ms. ApacheBench, on the same server, gave numbers that agree with Little's law (32 ÷ 0.39 ms ≈ 82k). Those autocannon numbers were discarded. The likely cause is the generator's single saturated event loop, which counts its own queueing as server latency.
 
+## Production
+
+Measured on the live Render Free deployment (0.1 CPU): ~37 redirects/s at 8 connections, p50 197 ms from India, 0 errors. Full table, method and cold-start figures are in [deployment.md](deployment.md#performance-production).
+
 ## Since the baseline
 
 Link-rot monitoring, the preview page and live counts were added after these measurements. The measured hot paths (redirect, create, analytics) gained no new work per request; the click flusher gained one membership check per batch. The baseline has **not** been re-run, so re-run `loadtest/run.sh` before quoting numbers for the current build.

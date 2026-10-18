@@ -67,6 +67,7 @@ It's a Spring Boot modular monolith on PostgreSQL, with Redis as an optional cac
 | Instance crash mid health-check | The link is re-checked later | The lease expires and the row becomes due again |
 | Free instance asleep | The first visitor waits for the cold start | Platform limitation, measured in deployment.md |
 | Bad deploy | Never reaches production | Render deploys only commits whose CI checks passed |
+| Client spoofs `X-Forwarded-For` to dodge rate limits | Still limited | The key is Cloudflare's `CF-Connecting-IP`, not `X-Forwarded-For` (a bypass found and fixed in production) |
 
 ## 5. How it scales (in the order you'd need it)
 
@@ -79,6 +80,7 @@ It's a Spring Boot modular monolith on PostgreSQL, with Redis as an optional cac
 ## 6. Numbers worth remembering
 
 - **Redirect throughput (local, 32 connections):** 82k req/s with the cache, 47k without (median of 3 runs).
+- **Production (Render Free, 0.1 CPU):** ~37 redirects/s at 8 concurrent connections, p50 197 ms from India; ~90 ms per request serially, mostly network. 1,304 redirects produced exactly 1,304 recorded clicks.
 - **Analytics queries:** index-only scans; 10 buffers read out of 789k rows, 0.3–2.3 ms.
 - **Click persistence:** batching took it from ~2.9k to ~35–45k clicks/s.
 - **Cold start at 0.1 CPU (local simulation):** 145 s → 89 s with Class Data Sharing.
