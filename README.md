@@ -19,6 +19,15 @@ What sets it apart from typical shorteners:
 | `loadtest/` | ApacheBench script and committed baseline results |
 | `docs/` | Architecture, API, database, caching, security, performance, interview notes |
 
+## Quick start with Docker
+
+```bash
+docker compose --profile app up -d --build      # UI http://localhost:3000 · API + short links http://localhost:8080
+scripts/smoke-test.sh http://localhost:8080 http://localhost:3000
+```
+
+`docker compose up -d` (no profile) starts only PostgreSQL (port 5433) and Redis, for running the app from your IDE. Deployment to free tiers (Render + Neon) is covered in [docs/deployment.md](docs/deployment.md).
+
 ## Prerequisites
 
 - JDK 21+ (the build targets Java 21 bytecode via `--release 21`). Maven isn't needed; use `./mvnw`.
@@ -137,6 +146,8 @@ Method, latencies, caveats and findings are in [docs/performance.md](docs/perfor
 
 ## Docs
 
+- [Deployment](docs/deployment.md): providers and verified free-tier limits, env vars, steps, limitations
+- [Interview guide](docs/interview-guide.md): request flows, trade-offs, failure scenarios, scaling
 - [Architecture](docs/architecture.md): components, request flows, failure modes
 - [API contract](docs/api.md)
 - [Database & indexing](docs/database.md): schema, indexes, measured query plans

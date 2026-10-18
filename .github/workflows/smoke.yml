@@ -6,7 +6,7 @@ on:
     inputs:
       api_url:
         description: Backend / short-link base URL
-        default: https://linklens.onrender.com
+        default: https://linklens-4zuc.onrender.com
         required: true
       app_url:
         description: Frontend URL

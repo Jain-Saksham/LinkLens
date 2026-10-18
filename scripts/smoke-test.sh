@@ -2,7 +2,7 @@
 # End-to-end smoke test against a running LinkLens (local or deployed).
 #
 #   scripts/smoke-test.sh <api-base-url> [frontend-url]
-#   e.g. scripts/smoke-test.sh https://linklens.onrender.com https://linklens-app.onrender.com
+#   e.g. scripts/smoke-test.sh https://linklens-4zuc.onrender.com https://linklens-app.onrender.com
 #
 # Creates real links (prefixed "smoke-"), so run it against environments where that's fine.
 # Exits non-zero on the first failed check.
