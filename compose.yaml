@@ -1,0 +1,68 @@
+# Local stack.
+#   Data stores only (run backend/frontend from your IDE or terminal):
+#       docker compose up -d
+#   Everything in containers (UI on http://localhost:3000, API/short links on http://localhost:8080):
+#       docker compose --profile app up -d --build
+#   Host ports are overridable if something already uses them, e.g.:
+#       BACKEND_PORT=8081 FRONTEND_PORT=3001 REDIS_PORT=6380 docker compose --profile app up -d
+name: linklens
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: linklens
+      POSTGRES_USER: linklens
+      POSTGRES_PASSWORD: linklens   # local only; production secrets live in the host's env settings
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"   # 5433 so it doesn't clash with a Postgres already on 5432
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U linklens -d linklens"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    profiles: ["app"]
+    build: ./backend
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/linklens
+      DB_USERNAME: linklens
+      DB_PASSWORD: linklens
+      REDIS_URL: redis://redis:6379
+      APP_BASE_URL: http://localhost:${BACKEND_PORT:-8080}
+      CORS_ALLOWED_ORIGINS: http://localhost:${FRONTEND_PORT:-3000}
+      FORWARD_HEADERS_STRATEGY: native   # requests arrive via the nginx container
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+
+  frontend:
+    profiles: ["app"]
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: ""                       # same origin: nginx proxies /api to the backend
+        VITE_SHORT_BASE_URL: http://localhost:${BACKEND_PORT:-8080}
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+
+volumes:
+  pgdata:

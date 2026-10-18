@@ -1,0 +1,29 @@
+# End-to-end check of a deployed environment. Run manually after a deploy (Actions → Smoke test → Run).
+name: Smoke test
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_url:
+        description: Backend / short-link base URL
+        default: https://linklens.onrender.com
+        required: true
+      app_url:
+        description: Frontend URL
+        default: https://linklens-app.onrender.com
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      # Inputs go through env vars, never straight into the script text (avoids shell injection).
+      - run: bash scripts/smoke-test.sh "$API_URL" "$APP_URL"
+        env:
+          API_URL: ${{ inputs.api_url }}
+          APP_URL: ${{ inputs.app_url }}
