@@ -3,6 +3,7 @@ package com.linklens.config;
 import com.linklens.ratelimit.RateLimitInterceptor;
 import com.linklens.ratelimit.RateLimiter;
 import java.time.Clock;
+import java.time.Duration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -42,9 +43,14 @@ public class WebConfig implements WebMvcConfigurer {
         }
     }
 
-    /** Injected wherever "now" matters, so tests can pin time instead of sleeping. */
+    /**
+     * Injected wherever "now" matters, so tests can pin time instead of sleeping.
+     * Ticks in microseconds because PostgreSQL timestamptz stores microseconds: with Linux's nanosecond
+     * clock, a freshly created object would otherwise report a different instant than the same object
+     * read back from the database ("...806017002Z" vs "...806017Z").
+     */
     @Bean
     public Clock clock() {
-        return Clock.systemUTC();
+        return Clock.tick(Clock.systemUTC(), Duration.ofNanos(1_000));
     }
 }
