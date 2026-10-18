@@ -39,8 +39,11 @@ services:
         value: https://linklens-4zuc.onrender.com
       - key: CORS_ALLOWED_ORIGINS
         value: https://linklens-app.onrender.com
-      # Render terminates TLS and forwards via its proxy; trust X-Forwarded-* from it (RemoteIpValve
-      # takes the right-most untrusted address, so a client can't spoof its rate-limit key).
+      # Render is fronted by Cloudflare. Verified in production: a client-supplied X-Forwarded-For is
+      # passed through, so it can't be the rate-limit key. CF-Connecting-IP is set by Cloudflare and
+      # overwrites anything the client sends, and every request to a Render service goes through it.
+      - key: CLIENT_IP_HEADER
+        value: CF-Connecting-IP
       - key: FORWARD_HEADERS_STRATEGY
         value: native
       # Neon free = 100 compute-hours/month; let it scale to zero between requests.

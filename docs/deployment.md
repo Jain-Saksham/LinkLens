@@ -18,7 +18,7 @@ LinkLens runs entirely on free tiers: **Render** (backend, cache, frontend) and 
                                               free, LRU, no persistence     free, aws-ap-southeast-1
 ```
 
-- **TLS** terminates at Render's edge, and certificates are automatic. The app trusts Render's proxy headers (`FORWARD_HEADERS_STRATEGY=native`), so it sees the real client IP for rate limiting and builds `https://` short links from `APP_BASE_URL`.
+- **TLS** terminates at Render's edge (Cloudflare in front of Render), and certificates are automatic. Short links are built from `APP_BASE_URL` (`https://…`). Rate limiting keys on `CF-Connecting-IP`, not `X-Forwarded-For`; see "Fixed during deployment" below.
 - **App and database share a region** (Singapore ↔ AWS ap-southeast-1). Every uncached redirect and every write is a database round trip.
 - **Migrations:** Flyway runs on startup, before the app accepts traffic. Hibernate is `validate`-only, so a schema/code mismatch fails the deploy instead of corrupting data.
 - **Deploys:** push to `main` → GitHub Actions CI. Render builds and deploys **only if the checks pass** (`autoDeployTrigger: checksPass`).
@@ -73,6 +73,7 @@ Set in `render.yaml`, except the three secrets.
 | `APP_BASE_URL` | `https://linklens-4zuc.onrender.com` | no |
 | `CORS_ALLOWED_ORIGINS` | `https://linklens-app.onrender.com` | no |
 | `FORWARD_HEADERS_STRATEGY` | `native` | no |
+| `CLIENT_IP_HEADER` | `CF-Connecting-IP` (rate-limit key; set by Cloudflare, not spoofable through Render's edge) | no |
 | `DB_POOL_SIZE`, `DB_MIN_IDLE`, `DB_IDLE_TIMEOUT_MS`, `DB_MAX_LIFETIME_MS` | `5`, `0`, `60000`, `240000` | no |
 | `HEALTH_POLL_INTERVAL` | `30m` | no |
 | `LOGGING_STRUCTURED_FORMAT_CONSOLE` | `ecs` (one JSON object per log line) | no |

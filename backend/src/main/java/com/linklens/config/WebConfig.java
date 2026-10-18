@@ -38,7 +38,7 @@ public class WebConfig implements WebMvcConfigurer {
     public void addInterceptors(InterceptorRegistry registry) {
         if (rateLimitProperties.enabled()) {
             // Both write paths: creating links, and on-demand health checks (each costs an outbound request).
-            registry.addInterceptor(new RateLimitInterceptor(rateLimiter))
+            registry.addInterceptor(new RateLimitInterceptor(rateLimiter, rateLimitProperties.clientIpHeader()))
                     .addPathPatterns("/api/v1/urls", "/api/v1/urls/*/health/check");
         }
     }

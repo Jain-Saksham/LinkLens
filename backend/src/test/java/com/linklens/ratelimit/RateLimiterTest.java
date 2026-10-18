@@ -12,7 +12,7 @@ class RateLimiterTest {
 
     private final AtomicLong now = new AtomicLong();
     private final RateLimiter limiter =
-            new RateLimiter(new RateLimitProperties(true, 2, Duration.ofMinutes(1)), now::get);
+            new RateLimiter(new RateLimitProperties(true, 2, Duration.ofMinutes(1), ""), now::get);
 
     @Test
     void limitsEachClientIndependently() {

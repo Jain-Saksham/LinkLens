@@ -76,6 +76,8 @@ app:
     enabled: ${RATE_LIMIT_ENABLED:true}
     capacity: ${RATE_LIMIT_CAPACITY:20}
     refill-period: ${RATE_LIMIT_REFILL_PERIOD:1m}
+    # Production behind Cloudflare (Render): CF-Connecting-IP. Empty = connection remote address.
+    client-ip-header: ${CLIENT_IP_HEADER:}
 
 management:
   endpoints:

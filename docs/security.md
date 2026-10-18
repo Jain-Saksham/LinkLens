@@ -24,7 +24,9 @@ Implementation: `backend/src/main/java/com/linklens/ratelimit/`.
 
 **Scope:**
 - Only creation is limited. Redirects are cheap, cached and must survive legitimate viral spikes. Their protection is the cache plus infrastructure (a CDN or WAF).
-- The client key is `request.getRemoteAddr()`. `X-Forwarded-For` is *not* read directly, because any client could then choose its own key. Behind a trusted proxy, set `FORWARD_HEADERS_STRATEGY=native` (or `framework`) so Spring resolves the real client IP safely.
+- The client key is a trusted edge header when configured (`CLIENT_IP_HEADER`), otherwise `request.getRemoteAddr()`. In production on Render, which is fronted by Cloudflare, it's `CF-Connecting-IP`: Cloudflare sets it and overwrites client-supplied values, and all traffic to a Render service passes through it.
+- **Found in production:** keying on `X-Forwarded-For` (via Tomcat's RemoteIpValve) let a client reset its own bucket just by sending a made-up `X-Forwarded-For`, because Render's edge passes the client's value along. Verified by sending a spoofed header (the bucket reset to 19) before the fix, and re-tested after it.
+- Never set `CLIENT_IP_HEADER` on a deployment that clients can reach without going through that edge, or they can choose their own key.
 
 ## Outbound requests: SSRF protection
 
