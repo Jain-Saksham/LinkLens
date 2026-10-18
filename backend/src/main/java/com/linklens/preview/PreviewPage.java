@@ -209,7 +209,7 @@ final class PreviewPage {
     private static final String TEMPLATE = """
             <!doctype html>
             <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-            <meta name="robots" content="noindex">{{refresh}}
+            <meta name="robots" content="noindex"><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%278%27 fill=%27%2316151a%27/%3E%3Ccircle cx=%2716%27 cy=%2716%27 r=%279%27 fill=%27none%27 stroke=%27%23f4f1ea%27 stroke-width=%272%27/%3E%3Ccircle cx=%2716%27 cy=%2716%27 r=%274%27 fill=%27%23e8492a%27/%3E%3C/svg%3E">{{refresh}}
             <title>Where {{short}} goes · LinkLens</title>""" + STYLE + """
             </head><body><main>
             <header>""" + LOGO + """
@@ -227,7 +227,7 @@ final class PreviewPage {
     private static final String TEMPLATE_NOT_FOUND = """
             <!doctype html>
             <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-            <meta name="robots" content="noindex"><title>Link not found · LinkLens</title>""" + STYLE + """
+            <meta name="robots" content="noindex"><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%278%27 fill=%27%2316151a%27/%3E%3Ccircle cx=%2716%27 cy=%2716%27 r=%279%27 fill=%27none%27 stroke=%27%23f4f1ea%27 stroke-width=%272%27/%3E%3Ccircle cx=%2716%27 cy=%2716%27 r=%274%27 fill=%27%23e8492a%27/%3E%3C/svg%3E"><title>Link not found · LinkLens</title>""" + STYLE + """
             </head><body><main>
             <header>""" + LOGO + """
             LinkLens<span class="tag">link preview</span></header>

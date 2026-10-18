@@ -27,6 +27,8 @@ class PreviewPageTest {
         assertThat(html).contains("<h1>spring.io</h1>", "Spring | Projects", "Encrypted (HTTPS)", "Working",
                 "after 1 redirect", "Redirect chain (2 steps)", "href=\"/docs\"", "Continue to spring.io");
         assertThat(html).doesNotContain("http-equiv=\"refresh\"");
+        // Inline icon (allowed by the CSP's img-src data:): browsers don't request /favicon.ico (a 404).
+        assertThat(html).contains("<link rel=\"icon\" href=\"data:image/svg+xml,");
     }
 
     @Test
