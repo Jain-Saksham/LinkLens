@@ -6,6 +6,8 @@ export interface ShortUrl {
   clickCount: number;
   createdAt: string;
   expiresAt: string | null;
+  /** Whether the destination still works; null if unknown. */
+  healthState?: HealthState | null;
 }
 
 export interface CreateShortUrlRequest {
@@ -34,7 +36,7 @@ export class ApiError extends Error {
   }
 }
 
-const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
+export const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
@@ -87,4 +89,42 @@ export interface Analytics {
 
 export function getAnalytics(shortCode: string, days: number): Promise<Analytics> {
   return request<Analytics>(`/api/v1/urls/${encodeURIComponent(shortCode)}/analytics?days=${days}`);
+}
+
+export type HealthState = 'PENDING' | 'HEALTHY' | 'WARNING' | 'BROKEN';
+
+export interface LinkHealth {
+  state: HealthState;
+  /** Machine-readable cause, e.g. NOT_FOUND, TIMEOUT, TITLE_CHANGED, BLOCKED. */
+  issue: string | null;
+  /** Plain-language explanation. */
+  message: string;
+  httpStatus: number | null;
+  finalUrl: string | null;
+  title: string | null;
+  https: boolean;
+  redirectChain: { url: string; status: number | null }[];
+  consecutiveFailures: number;
+  checkedAt: string | null;
+  lastHealthyAt: string | null;
+  nextCheckAt: string | null;
+}
+
+export function getHealth(shortCode: string): Promise<LinkHealth> {
+  return request<LinkHealth>(`/api/v1/urls/${encodeURIComponent(shortCode)}/health`);
+}
+
+/** Rate limited and cooled down server-side: may return the last result instead of a new check. */
+export function checkHealth(shortCode: string): Promise<LinkHealth> {
+  return request<LinkHealth>(`/api/v1/urls/${encodeURIComponent(shortCode)}/health/check`, { method: 'POST' });
+}
+
+/** Server-Sent Events stream of { clickCount } for one link. */
+export function clickStreamUrl(shortCode: string): string {
+  return `${BASE_URL}/api/v1/urls/${encodeURIComponent(shortCode)}/clicks/stream`;
+}
+
+/** The public preview page lives on the short-link domain: same URL plus "+". */
+export function previewUrl(shortUrl: string): string {
+  return `${shortUrl}+`;
 }

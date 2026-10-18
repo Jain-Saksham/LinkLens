@@ -7,6 +7,11 @@ An interview-focused URL shortener:
 - **rate-limited** link creation;
 - a reproducible **load test** with measured results.
 
+What sets it apart from typical shorteners:
+- **Link-rot monitoring.** Every destination is re-checked in the background (SSRF-safe). A link that starts returning 404, loops in redirects, loses its domain, or gets replaced by a different page is flagged: *"Your link points to a dead page."*
+- **A transparent preview.** Add `+` to any short link (`/docs+`) to see where it really goes before visiting: final URL after redirects, page title, HTTPS, health, expiry.
+- **A live click counter.** Watch clicks arrive in real time (Server-Sent Events).
+
 | Part | Stack |
 |---|---|
 | `backend/` | Java 21, Spring Boot 3.5, Maven, PostgreSQL + Flyway, Redis (optional cache) |
@@ -47,8 +52,11 @@ Flyway creates and migrates the schema on startup. Check `http://localhost:8080/
 
 **In the UI:**
 - Shorten a link, optionally with an alias and an expiry.
-- Copy it, open it, or open its **Analytics** page (`/links/{code}`): totals, a daily chart, top sources and insights.
-- "Your links" lives in your browser's `localStorage`, because there are no accounts.
+- Copy, open or **preview** it, and watch its click count go live.
+- Its **Analytics** page (`/links/{code}`) has live totals, a daily chart, top sources, insights and **destination health**, with a "Check now" button and a banner when the link is broken.
+- "Your links" lives in your browser's `localStorage`, because there are no accounts. It flags broken links.
+
+Destinations are checked in the background (first check within ~30 s, then daily, backing off when failing). The preview page is served by the backend at `http://localhost:8080/{code}+`.
 
 ### Configuration
 
@@ -64,6 +72,8 @@ All settings are environment variables. `backend/.env` is loaded if present, and
 | `FORWARD_HEADERS_STRATEGY` | `none` | Set to `native` behind a trusted proxy |
 | `APP_BASE_URL` | `http://localhost:8080` | Origin used in returned short links |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173` | Frontend origins |
+| `HEALTH_CHECKS_ENABLED`, `HEALTH_CHECK_INTERVAL`, `HEALTH_FAILURE_THRESHOLD` | `true`, `24h`, `2` | Link-rot monitoring |
+| `LIVE_MAX_PER_LINK`, `LIVE_MAX_TOTAL` | `50`, `1000` | Caps on open live-count streams |
 | `MANAGEMENT_ENDPOINTS` | `health` | Add `metrics` for cache and click counters |
 
 ## API (summary)
@@ -74,6 +84,10 @@ All settings are environment variables. `backend/.env` is loaded if present, and
 | `GET` | `/{code}` | `302` redirect (click recorded) | `404`, `410` expired |
 | `GET` | `/api/v1/urls/{code}` | `200` link + all-time clicks | `404` |
 | `GET` | `/api/v1/urls/{code}/analytics?days=30` | `200` totals, daily series, referrers, insights | `400`, `404` |
+| `GET` | `/{code}+` | `200` HTML preview of the destination | `404`, `410` |
+| `GET` | `/api/v1/urls/{code}/health` | `200` state, cause, final URL, title, redirect chain | `404` |
+| `POST` | `/api/v1/urls/{code}/health/check` | `200` fresh check (60 s cooldown) | `404`, `429` |
+| `GET` | `/api/v1/urls/{code}/clicks/stream` | SSE `clicks` events `{clickCount}` | `404`, `503` |
 
 ```bash
 curl -X POST localhost:8080/api/v1/urls -H 'Content-Type: application/json' \
@@ -97,6 +111,10 @@ cd frontend && npm run build   # type-check + production build
 | Concurrency | 16 parallel requests for one alias → exactly one 201; parallel generated codes all unique; token bucket never overspends |
 | Analytics | Referrer stored as host only; bots not counted; UTC day boundaries; aggregation SQL on real PostgreSQL; insight rules |
 | Errors | 400 / 404 / 409 / 410 / 429 / 503 / generic 500 contracts |
+| SSRF | 38 address cases (metadata, RFC 1918, IPv6 ULA, IPv4-in-IPv6, NAT64); localhost blocked via DNS; a redirect into 169.254.169.254 is never requested |
+| Link health | Real HTTP against a local site: healthy → warning → broken with backoff, redirect chains, title drift, timeouts, loops, huge pages, bot walls; `SKIP LOCKED` claims are disjoint under concurrency; expired links retired |
+| Preview | Attacker-controlled titles escaped; placeholder injection impossible; CSP headers; doesn't count a click |
+| Live counts | SSE stream delivers the current count, then updates after clicks commit; subscriber caps |
 
 Integration tests run against real PostgreSQL 16 and Redis 7 containers and skip themselves when Docker isn't available.
 
@@ -123,7 +141,7 @@ Method, latencies, caveats and findings are in [docs/performance.md](docs/perfor
 - [API contract](docs/api.md)
 - [Database & indexing](docs/database.md): schema, indexes, measured query plans
 - [Caching](docs/caching.md): TTL/expiry, invalidation, fail-open
-- [Security & privacy](docs/security.md): rate limiting, validation, data collected
+- [Security & privacy](docs/security.md): SSRF protection, preview output encoding, rate limiting, validation, data collected
 - [Performance](docs/performance.md): how to reproduce, baseline numbers
 - [Interview notes](docs/interview-notes.md): decisions, trade-offs, likely questions
 
@@ -134,11 +152,15 @@ backend/src/main/java/com/linklens/
   controller/   HTTP only: ShortUrlController (API + analytics), RedirectController (/{code})
   service/      ShortUrlService, AnalyticsService, InsightGenerator, ClickRecorder, ClickSource
   cache/        ShortUrlCache (Redis cache-aside, fail-open), CachedLink
+  inspection/   DestinationInspector, SafeDnsResolver + AddressPolicy (SSRF guard), HtmlTitle
+  health/       Link-rot monitoring: HealthEvaluator (pure rules), LinkHealthService, scheduler
+  preview/      /{code}+ server-rendered preview page
+  live/         LiveClickRegistry: SSE subscribers per link
   ratelimit/    TokenBucket, RateLimiter, RateLimitInterceptor
   repository/   Spring Data JPA + native aggregation queries
   domain/       JPA entities: ShortUrl, ClickEvent
   dto/ exception/ validation/ config/
-backend/src/main/resources/db/migration/   V1 short_urls, V2 click_events
+backend/src/main/resources/db/migration/   V1 short_urls, V2 click_events, V3 link_health
 
 frontend/src/
   pages/        HomePage, AnalyticsPage

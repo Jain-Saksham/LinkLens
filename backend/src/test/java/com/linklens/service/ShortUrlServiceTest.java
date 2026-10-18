@@ -22,6 +22,7 @@ import com.linklens.exception.AliasUnavailableException;
 import com.linklens.exception.InvalidUrlException;
 import com.linklens.exception.ShortUrlExpiredException;
 import com.linklens.exception.ShortUrlNotFoundException;
+import com.linklens.health.LinkHealthRepository;
 import com.linklens.repository.ShortUrlRepository;
 import java.sql.SQLException;
 import java.time.Clock;
@@ -38,6 +39,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.transaction.support.TransactionOperations;
 
 @ExtendWith(MockitoExtension.class)
 class ShortUrlServiceTest {
@@ -52,14 +54,16 @@ class ShortUrlServiceTest {
     private ShortUrlCache cache;
     @Mock
     private ClickRecorder clickRecorder;
+    @Mock
+    private LinkHealthRepository healthRepository;
 
     private ShortUrlService service;
 
     @BeforeEach
     void setUp() {
         AppProperties properties = new AppProperties("http://lnk.test/", 7, List.of("http://localhost:5173"));
-        service = new ShortUrlService(repository, codeGenerator, cache, clickRecorder, properties,
-                Clock.fixed(NOW, ZoneOffset.UTC));
+        service = new ShortUrlService(repository, codeGenerator, cache, clickRecorder, healthRepository,
+                TransactionOperations.withoutTransaction(), properties, Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     @Nested
@@ -68,7 +72,7 @@ class ShortUrlServiceTest {
         @Test
         void createsLinkWithGeneratedCodeAndWritesThroughToCache() {
             when(codeGenerator.generate()).thenReturn("abc1234");
-            when(repository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(repository.saveAndFlush(any())).thenAnswer(ShortUrlServiceTest::assignId);
 
             ShortUrlResponse response = service.create(new CreateShortUrlRequest("  https://example.com/a  ", null, null));
 
@@ -76,7 +80,9 @@ class ShortUrlServiceTest {
             assertThat(response.shortUrl()).isEqualTo("http://lnk.test/abc1234");
             assertThat(response.originalUrl()).isEqualTo("https://example.com/a");
             assertThat(response.createdAt()).isEqualTo(NOW);
+            assertThat(response.healthState()).isEqualTo("PENDING");
             verify(cache).put(eq("abc1234"), any(CachedLink.class));
+            verify(healthRepository).createPending(99L);
         }
 
         @Test
@@ -84,7 +90,7 @@ class ShortUrlServiceTest {
             when(codeGenerator.generate()).thenReturn("taken01", "free001");
             when(repository.saveAndFlush(any()))
                     .thenThrow(shortCodeConflict())
-                    .thenAnswer(inv -> inv.getArgument(0));
+                    .thenAnswer(ShortUrlServiceTest::assignId);
 
             assertThat(service.create(new CreateShortUrlRequest("https://example.com", null, null)).shortCode())
                     .isEqualTo("free001");
@@ -99,12 +105,13 @@ class ShortUrlServiceTest {
                     .isInstanceOf(IllegalStateException.class);
             verify(repository, times(ShortUrlService.MAX_GENERATION_ATTEMPTS)).saveAndFlush(any());
             verify(cache, never()).put(anyString(), any());
+            verifyNoInteractions(healthRepository);
         }
 
         @Test
         void createsLinkWithCustomAliasAndExpiry() {
             Instant expiry = NOW.plus(Duration.ofDays(7));
-            when(repository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(repository.saveAndFlush(any())).thenAnswer(ShortUrlServiceTest::assignId);
 
             ShortUrlResponse response = service.create(new CreateShortUrlRequest("https://example.com", "my-link", expiry));
 
@@ -208,6 +215,13 @@ class ShortUrlServiceTest {
             service.resolveAndRecordClick("abc1234", new ClickContext(null, "Slackbot-LinkExpanding 1.0"));
             verifyNoInteractions(clickRecorder);
         }
+    }
+
+    /** Like the database's IDENTITY column: a saved entity has an id. */
+    private static ShortUrl assignId(org.mockito.invocation.InvocationOnMock invocation) {
+        ShortUrl link = invocation.getArgument(0);
+        org.springframework.test.util.ReflectionTestUtils.setField(link, "id", 99L);
+        return link;
     }
 
     private static DataIntegrityViolationException shortCodeConflict() {

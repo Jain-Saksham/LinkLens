@@ -11,7 +11,8 @@ import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 @Configuration
-@EnableConfigurationProperties({AppProperties.class, CacheProperties.class, RateLimitProperties.class})
+@EnableConfigurationProperties({AppProperties.class, CacheProperties.class, RateLimitProperties.class,
+        HealthProperties.class, LiveProperties.class})
 public class WebConfig implements WebMvcConfigurer {
 
     private final AppProperties properties;
@@ -35,7 +36,9 @@ public class WebConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         if (rateLimitProperties.enabled()) {
-            registry.addInterceptor(new RateLimitInterceptor(rateLimiter)).addPathPatterns("/api/v1/urls");
+            // Both write paths: creating links, and on-demand health checks (each costs an outbound request).
+            registry.addInterceptor(new RateLimitInterceptor(rateLimiter))
+                    .addPathPatterns("/api/v1/urls", "/api/v1/urls/*/health/check");
         }
     }
 

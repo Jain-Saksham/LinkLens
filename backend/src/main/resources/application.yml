@@ -13,6 +13,12 @@ spring:
       # Fail fast when the database is unreachable (default is 30s per request).
       connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:3000}   # milliseconds (Hikari takes a plain long)
       maximum-pool-size: ${DB_POOL_SIZE:10}
+      # Serverless Postgres (Neon) suspends when idle and bills compute while awake. Letting the pool
+      # drain to zero idle connections lets it suspend; max-lifetime recycles connections well before
+      # the server would drop them. Locally these defaults behave like a normal pool.
+      minimum-idle: ${DB_MIN_IDLE:10}
+      idle-timeout: ${DB_IDLE_TIMEOUT_MS:600000}
+      max-lifetime: ${DB_MAX_LIFETIME_MS:1800000}
       data-source-properties:
         # Turns JDBC batches into multi-row INSERTs (used by the click flusher).
         reWriteBatchedInserts: true
@@ -33,9 +39,16 @@ spring:
       enabled: true
   lifecycle:
     timeout-per-shutdown-phase: 15s
+  task:
+    scheduling:
+      pool:
+        # Default is ONE thread shared by every @Scheduled job: a slow health-check poll would then
+        # delay the click flusher. Separate threads keep the jobs independent.
+        size: 3
 
 server:
-  port: ${SERVER_PORT:8080}
+  # PaaS hosts (Render, Heroku-style) inject PORT; SERVER_PORT still wins when set explicitly.
+  port: ${SERVER_PORT:${PORT:8080}}
   shutdown: graceful
   # Behind a reverse proxy, set to "native" or "framework" so the real client IP (used for rate
   # limiting) comes from X-Forwarded-For. Left off by default: trusting that header without a proxy
@@ -51,6 +64,14 @@ app:
     ttl: ${CACHE_TTL:1h}
     negative-ttl: ${CACHE_NEGATIVE_TTL:60s}
     failure-backoff: ${CACHE_FAILURE_BACKOFF:30s}
+  health:
+    enabled: ${HEALTH_CHECKS_ENABLED:true}
+    poll-interval: ${HEALTH_POLL_INTERVAL:30s}
+    healthy-interval: ${HEALTH_CHECK_INTERVAL:24h}
+    failure-threshold: ${HEALTH_FAILURE_THRESHOLD:2}
+  live:
+    max-subscribers-per-link: ${LIVE_MAX_PER_LINK:50}
+    max-subscribers: ${LIVE_MAX_TOTAL:1000}
   rate-limit:
     enabled: ${RATE_LIMIT_ENABLED:true}
     capacity: ${RATE_LIMIT_CAPACITY:20}
@@ -61,7 +82,19 @@ management:
     web:
       exposure:
         include: ${MANAGEMENT_ENDPOINTS:health}
+  endpoint:
+    health:
+      # /actuator/health/liveness  = "the process is up" (no dependencies): what the platform polls,
+      #                              so frequent health checks never wake or bill the database.
+      # /actuator/health/readiness = "can serve traffic" (includes the database).
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
   health:
     # Redis is an optional cache (the app fails open without it), so it must not mark the app DOWN.
     redis:
       enabled: false
+
+# JSON logs in production: set LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs (Spring Boot structured logging).

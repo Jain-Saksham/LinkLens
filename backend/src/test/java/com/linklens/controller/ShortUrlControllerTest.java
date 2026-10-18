@@ -43,7 +43,7 @@ class ShortUrlControllerTest {
 
     private static final ShortUrlResponse RESPONSE = new ShortUrlResponse(
             "abc1234", "http://localhost:8080/abc1234", "https://example.com",
-            false, 0, Instant.parse("2026-01-01T00:00:00Z"), null);
+            false, 0, Instant.parse("2026-01-01T00:00:00Z"), null, "PENDING");
 
     @Test
     void createReturns201WithLocationBodyAndRateLimitHeaders() throws Exception {

@@ -21,6 +21,22 @@ click_events                                 -- V2
   referrer_host varchar(255)     NULL       -- NULL = direct/unknown
 ```
 
+```sql
+link_health                                  -- V3, one-to-one with short_urls
+  short_url_id          bigint      PK, FK → short_urls(id) ON DELETE CASCADE
+  state                 varchar(16) NOT NULL CHECK IN (PENDING, HEALTHY, WARNING, BROKEN)
+  issue                 varchar(32)            -- NOT_FOUND, TIMEOUT, TITLE_CHANGED, ...
+  http_status           integer
+  final_url             varchar(2048)
+  title, baseline_title varchar(300)           -- current title, and the first one seen
+  redirect_chain        jsonb                  -- [{"url": ..., "status": 301}, ...]
+  consecutive_failures  integer     NOT NULL   CHECK >= 0
+  checked_at, last_healthy_at  timestamptz
+  next_check_at         timestamptz NOT NULL   -- 'infinity' once the link expires
+```
+
+`link_health` is separate from `short_urls` on purpose. `short_urls` is the redirect hot path and the cache source, while health rows are rewritten by a background job on a different schedule. Keeping them apart means health writes never touch, lock or bloat the rows redirects read.
+
 **What is not stored**, by design: IP address, user agent, cookies, and the full referrer URL (which can contain search terms or tokens).
 
 ## Indexes and the queries they serve
@@ -29,6 +45,22 @@ click_events                                 -- V2
 |---|---|---|
 | `uk_short_urls_short_code` (unique B-tree, created by the constraint) | `WHERE short_code = ?` on every uncached redirect, and every insert | Enforces uniqueness and serves the lookup; a second index would be redundant |
 | `idx_click_events_link_time (short_url_id, clicked_at) INCLUDE (referrer_host)` | `WHERE short_url_id = ? AND clicked_at >= ?` for the daily trend and the referrer breakdown | Equality column first, range column second, so the scan touches only one link's recent rows. `INCLUDE` makes it covering, which enables index-only scans. It also serves the FK on delete. |
+| `idx_link_health_next_check (next_check_at)` | the scheduler's `WHERE next_check_at <= now() ORDER BY next_check_at LIMIT n` | Due links are found with an index range scan, oldest first |
+
+### Claiming work safely: `FOR UPDATE SKIP LOCKED`
+
+```sql
+UPDATE link_health h SET next_check_at = now() + interval '10 minutes'   -- the lease
+FROM short_urls s
+WHERE s.id = h.short_url_id AND h.short_url_id IN (
+    SELECT short_url_id FROM link_health WHERE next_check_at <= now()
+    ORDER BY next_check_at LIMIT 20 FOR UPDATE SKIP LOCKED)
+RETURNING h.*, s.original_url, s.expires_at;
+```
+
+- **Multi-instance safe:** two schedulers polling at the same moment get *disjoint* batches. Locked rows are skipped, not waited on (integration-tested with concurrent claims).
+- **Network calls outside the transaction:** the claim commits immediately, the slow HTTP checks run afterwards, and each result is written in its own short `UPDATE`. A transaction never stays open across network I/O.
+- **Crash recovery:** a claim pushes `next_check_at` 10 minutes out, which works as a lease. If the instance dies mid-check, the link simply becomes due again.
 
 ### Measured plans
 

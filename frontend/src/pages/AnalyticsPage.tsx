@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
-import { type Analytics, ApiError, getAnalytics } from '../api/client';
+import { type Analytics, ApiError, getAnalytics, getHealth, type LinkHealth, previewUrl } from '../api/client';
 import { ClicksChart } from '../components/analytics/ClicksChart';
+import { HealthCard } from '../components/analytics/HealthCard';
 import { InsightList } from '../components/analytics/InsightList';
 import { ReferrerBars } from '../components/analytics/ReferrerBars';
 import { CopyButton } from '../components/CopyButton';
+import { LiveDot } from '../components/LiveDot';
 import { ArrowUpRightIcon, RefreshIcon } from '../components/icons';
+import { useLiveClicks } from '../hooks/useLiveClicks';
+import { applyLiveCount } from '../lib/analytics';
 import { formatDay } from '../lib/chart';
 import { displayUrl, formatCount, formatRelative, linkStatus } from '../lib/format';
 import { onLinkClick } from '../lib/router';
@@ -22,6 +26,12 @@ export function AnalyticsPage({ code }: { code: string }) {
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [refreshing, setRefreshing] = useState(false);
   const [showTable, setShowTable] = useState(false);
+  const [health, setHealth] = useState<LinkHealth | null>(null);
+  const live = useLiveClicks(state.kind === 'error' ? null : code);
+
+  useEffect(() => {
+    getHealth(code).then(setHealth, () => setHealth(null));
+  }, [code]);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -54,7 +64,9 @@ export function AnalyticsPage({ code }: { code: string }) {
     );
   }
 
-  const data = state.kind === 'ready' ? state.data : null;
+  // The snapshot plus whatever arrived live since it was loaded.
+  const data = state.kind === 'ready' ? applyLiveCount(state.data, live.count) : null;
+  const problem = health && (health.state === 'BROKEN' || health.state === 'WARNING') ? health : null;
   const status = data ? linkStatus(data.expiresAt) : null;
   const topSource = data?.referrers.find((r) => r.source !== 'Other');
 
@@ -71,6 +83,17 @@ export function AnalyticsPage({ code }: { code: string }) {
           <h1 className="mt-1 flex items-center gap-2 font-mono text-2xl text-ink sm:text-3xl">
             <span className="truncate">/{code}</span>
             {data && <CopyButton text={data.shortUrl} />}
+            {data && (
+              <a
+                href={previewUrl(data.shortUrl)}
+                target="_blank"
+                rel="noreferrer"
+                title="Public preview page: where this link goes, before anyone clicks"
+                className="ml-1 rounded-full border border-line px-2.5 py-1 font-sans text-xs font-medium text-ink-soft transition hover:text-ink"
+              >
+                Preview
+              </a>
+            )}
           </h1>
           {data && (
             <p className="mt-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted">
@@ -115,9 +138,24 @@ export function AnalyticsPage({ code }: { code: string }) {
         </div>
       </header>
 
+      {problem && (
+        <div
+          role="alert"
+          className={`mt-6 flex items-start gap-3 rounded-2xl px-4 py-3.5 text-sm ${
+            problem.state === 'BROKEN' ? 'bg-danger-soft text-danger' : 'bg-warn-soft text-warn'
+          }`}
+        >
+          <span aria-hidden className="mt-px font-mono font-semibold">{problem.state === 'BROKEN' ? '✕' : '!'}</span>
+          <p>
+            <span className="font-semibold">{problem.state === 'BROKEN' ? 'Broken link. ' : 'Heads up. '}</span>
+            {problem.message}
+          </p>
+        </div>
+      )}
+
       {/* Stat tiles */}
       <section className="mt-8 grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="Summary">
-        <StatTile label="Total clicks" value={data ? formatCount(data.totalClicks) : null} hint="All time" hero />
+        <StatTile label="Total clicks" value={data ? formatCount(data.totalClicks) : null} hint="All time" hero live={live.live} />
         <StatTile label={`Last ${period} days`} value={data ? formatCount(data.periodClicks) : null} hint="UTC days, incl. today" />
         <StatTile
           label="Daily average"
@@ -152,6 +190,9 @@ export function AnalyticsPage({ code }: { code: string }) {
             Insights
           </h2>
           {data ? <InsightList insights={data.insights} /> : <div className="h-32 animate-pulse rounded-2xl bg-surface-sunk" />}
+          <div className="mt-4">
+            <HealthCard code={code} health={health} onUpdate={setHealth} />
+          </div>
         </section>
         <section className="rounded-[24px] border border-line bg-surface p-5 sm:p-6" aria-labelledby="sources-heading">
           <h2 id="sources-heading" className="mb-5 font-medium text-ink">
@@ -168,10 +209,13 @@ export function AnalyticsPage({ code }: { code: string }) {
   );
 }
 
-function StatTile({ label, value, hint, hero = false, small = false }: { label: string; value: string | null; hint: string; hero?: boolean; small?: boolean }) {
+function StatTile({ label, value, hint, hero = false, small = false, live = false }: { label: string; value: string | null; hint: string; hero?: boolean; small?: boolean; live?: boolean }) {
   return (
     <div className="min-w-0 rounded-[20px] border border-line bg-surface p-4 sm:p-5">
-      <p className="text-[13px] text-ink-soft">{label}</p>
+      <p className="flex items-center justify-between gap-2 text-[13px] text-ink-soft">
+        {label}
+        {live && <LiveDot />}
+      </p>
       {value === null ? (
         <div className="mt-2 h-9 w-20 animate-pulse rounded-lg bg-surface-sunk" />
       ) : (
@@ -223,3 +267,4 @@ function DailyTable({ daily }: { daily: Analytics['daily'] }) {
     </div>
   );
 }
+

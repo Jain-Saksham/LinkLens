@@ -1,4 +1,6 @@
-import type { ShortUrl } from '../api/client';
+import { previewUrl, type ShortUrl } from '../api/client';
+import { useLiveClicks } from '../hooks/useLiveClicks';
+import { LiveDot } from './LiveDot';
 import { displayUrl, formatRelative } from '../lib/format';
 import { CopyButton } from './CopyButton';
 import { analyticsPath, onLinkClick } from '../lib/router';
@@ -11,6 +13,9 @@ interface Props {
 
 export function ResultCard({ link, onDismiss }: Props) {
   const { protocol, host } = new URL(link.shortUrl);
+  // The "wow" moment: share the link and watch the count move.
+  const live = useLiveClicks(link.shortCode);
+  const clicks = live.count ?? link.clickCount;
 
   return (
     <section
@@ -74,8 +79,20 @@ export function ResultCard({ link, onDismiss }: Props) {
             <ChartIcon />
             Analytics
           </a>
-          <span className="ml-auto text-xs text-muted">
-            {link.expiresAt ? `Expires ${formatRelative(link.expiresAt)}` : 'Never expires'}
+          <a
+            href={previewUrl(link.shortUrl)}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex h-11 items-center rounded-full px-2 text-sm font-medium text-ink-soft transition hover:text-ink"
+          >
+            Preview
+          </a>
+          <span className="ml-auto flex items-center gap-3 text-xs text-muted">
+            <span className="inline-flex items-center gap-2 font-mono text-ink" aria-live="polite">
+              {clicks} {clicks === 1 ? 'click' : 'clicks'}
+              {live.live && <LiveDot />}
+            </span>
+            <span>{link.expiresAt ? `Expires ${formatRelative(link.expiresAt)}` : 'Never expires'}</span>
           </span>
         </div>
       </div>

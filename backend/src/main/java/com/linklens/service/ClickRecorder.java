@@ -1,5 +1,6 @@
 package com.linklens.service;
 
+import com.linklens.live.LiveClickRegistry;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PreDestroy;
@@ -7,7 +8,9 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
@@ -53,17 +56,19 @@ public class ClickRecorder {
     private final BlockingQueue<Click> queue;
     private final JdbcTemplate jdbc;
     private final TransactionOperations tx;
+    private final LiveClickRegistry live;
     private final Counter dropped;
     private final Counter failed;
 
     @Autowired
-    public ClickRecorder(JdbcTemplate jdbc, TransactionOperations tx, MeterRegistry meters) {
-        this(jdbc, tx, meters, QUEUE_CAPACITY);
+    public ClickRecorder(JdbcTemplate jdbc, TransactionOperations tx, LiveClickRegistry live, MeterRegistry meters) {
+        this(jdbc, tx, live, meters, QUEUE_CAPACITY);
     }
 
-    ClickRecorder(JdbcTemplate jdbc, TransactionOperations tx, MeterRegistry meters, int capacity) {
+    ClickRecorder(JdbcTemplate jdbc, TransactionOperations tx, LiveClickRegistry live, MeterRegistry meters, int capacity) {
         this.jdbc = jdbc;
         this.tx = tx;
+        this.live = live;
         this.queue = new ArrayBlockingQueue<>(capacity);
         this.dropped = meters.counter("linklens.clicks.dropped");
         this.failed = meters.counter("linklens.clicks.failed");
@@ -120,6 +125,30 @@ public class ClickRecorder {
             jdbc.batchUpdate("INSERT INTO click_events (short_url_id, clicked_at, referrer_host) VALUES (?, ?, ?)", rows);
             jdbc.batchUpdate("UPDATE short_urls SET click_count = click_count + ? WHERE id = ?", increments);
         });
+        try {
+            publishLiveCounts(perLink.keySet());
+        } catch (RuntimeException e) {
+            // The batch is already committed; a live-update hiccup must not mark it as failed.
+            log.debug("Live click publish failed: {}", e.toString());
+        }
+    }
+
+    /**
+     * After commit (never before: a rolled-back count must not reach a screen), push the new totals of
+     * links someone is watching. Usually nobody is, and then this costs no query at all.
+     */
+    private void publishLiveCounts(Set<Long> changed) {
+        Set<Long> watched = live.watched(changed);
+        if (watched.isEmpty()) {
+            return;
+        }
+        Map<Long, Long> counts = new HashMap<>();
+        jdbc.query("SELECT id, click_count FROM short_urls WHERE id = ANY(?)",
+                rs -> {
+                    counts.put(rs.getLong("id"), rs.getLong("click_count"));
+                },
+                (Object) watched.toArray(Long[]::new));
+        live.publish(counts);
     }
 
     int queued() {

@@ -17,7 +17,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 /** Redis is pointed at a port nobody listens on: the app must keep working from PostgreSQL alone. */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = {"app.rate-limit.enabled=false", "spring.data.redis.url=redis://localhost:1"})
+        properties = {"app.rate-limit.enabled=false", "app.health.enabled=false", "spring.data.redis.url=redis://localhost:1"})
 @Import(PostgresTestConfig.class)
 @Testcontainers(disabledWithoutDocker = true)
 class RedisUnavailableIntegrationTest {

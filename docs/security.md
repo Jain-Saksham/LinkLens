@@ -26,6 +26,42 @@ Implementation: `backend/src/main/java/com/linklens/ratelimit/`.
 - Only creation is limited. Redirects are cheap, cached and must survive legitimate viral spikes. Their protection is the cache plus infrastructure (a CDN or WAF).
 - The client key is `request.getRemoteAddr()`. `X-Forwarded-For` is *not* read directly, because any client could then choose its own key. Behind a trusted proxy, set `FORWARD_HEADERS_STRATEGY=native` (or `framework`) so Spring resolves the real client IP safely.
 
+## Outbound requests: SSRF protection
+
+Link-rot monitoring and the preview page make LinkLens **fetch URLs that anyone can submit**. That's the classic server-side request forgery setup. An attacker shortens `http://169.254.169.254/latest/meta-data/` (the cloud metadata service that hands out credentials), `http://localhost:6379` or `http://10.0.0.5/admin`, and waits for the server to fetch it.
+
+Defences (`backend/src/main/java/com/linklens/inspection/`):
+
+| Layer | What it does |
+|---|---|
+| **Address policy** (`AddressPolicy`) | Allows only globally routable unicast addresses. Blocks loopback, `0.0.0.0/8`, RFC 1918, link-local `169.254/16` + `fe80::/10` (metadata), CGNAT `100.64/10`, test/benchmark ranges, multicast/broadcast, IPv6 unique-local `fc00::/7` (AWS `fd00:ec2::254`), and IPv4 smuggled inside IPv6 (`::ffff:a.b.c.d`, NAT64 `64:ff9b::/96`). 38 address cases are unit-tested. |
+| **Check at connect time** (`SafeDnsResolver`) | Plugged into Apache HttpClient's DNS resolver, so the client connects only to addresses that were just validated. This closes **DNS rebinding**: with check-then-fetch, an attacker's DNS answers "public" to the check and `127.0.0.1` to the fetch. |
+| **Every hop** | Redirects are followed manually (at most 5, with loop detection), and each hop resolves through the same resolver. A public page that 302s to the metadata IP is refused before any connection (tested). IP-literal hosts are also checked up front. |
+| **Schemes** | Only `http`/`https`. A redirect to `ftp:`, `file:` or `gopher:` is reported as `INVALID_REDIRECT`, not followed. |
+| **Bounded work** | 3 s connect, 5 s read, a 10 s hard deadline per inspection, reads stop at `</title>` or 1 MiB (HTML only), no retries, no cookies, no credentials, no system proxy. |
+| **Bounded volume** | Scheduled checks are batched (20 per poll, 8 concurrent). Manual checks are rate-limited (20/min per IP) with a 60 s per-link cooldown. The preview reuses stored results for 6 h and deduplicates concurrent checks. So LinkLens can't be used to hammer a third-party site. |
+| **Honest identity** | `User-Agent: LinkLensBot/1.0 (+link health check)`, so site owners can identify and block us. |
+
+`app.health.allow-loopback=true` exists only so tests can fetch a local HTTP server. It allows `127.0.0.0/8` and nothing else, and must never be set in production.
+
+**Production hardening beyond the app:** run the fetcher with no network route to internal services (egress-only network policy or an egress proxy). Application checks are defence in depth, not a substitute.
+
+## Preview page: output encoding
+
+Page titles and URLs come from third-party sites, so treat them as attacker-controlled HTML.
+- **Every value is escaped** (`HtmlUtils.htmlEscape`) where it's inserted.
+- **Single-pass templating.** Chained `String.replace` calls would expand a placeholder that arrives *inside* content: a site titled `{{action}}` could splice markup into the page. Tested.
+- **CSP `default-src 'none'`** with no scripts at all, so even a missed escape could not execute. `frame-ancestors 'none'` blocks clickjacking, `nosniff` stops MIME sniffing, `no-referrer` keeps preview URLs out of other sites' logs.
+- The short code is case-sensitive and shown verbatim (never upper-cased), so the page can't display a different link.
+
+## Live streams (SSE): resource limits
+
+Each open stream holds a connection, which makes it a cheap denial-of-service lever.
+- **Caps:** 50 per link, 1,000 per instance; over the cap → 503 + `Retry-After`.
+- **Bounded lifetime:** streams time out after 30 min, and heartbeats detect dead clients.
+- **Isolation:** sends run on their own thread, so a stalled client can't block the click writer.
+- **No sensitive data:** streams carry only a link's public click count.
+
 ## Input validation
 
 | Input | Rule | Where |
@@ -63,5 +99,7 @@ The UI states this next to the source breakdown.
 - Secrets come from environment variables or a git-ignored `backend/.env`, never from the repo.
 
 ## Not in scope yet
+
+- Malware/phishing reputation for destinations (e.g. Google Safe Browsing). The preview shows the real host, which already helps against look-alike domains.
 
 There is no authentication, so anyone with a code can see its analytics, the way stats pages are typically public on bit.ly-style services. When accounts are added: per-owner analytics authorization, an abuse-report flow, and checking target URLs against a malware/phishing list (e.g. Google Safe Browsing).

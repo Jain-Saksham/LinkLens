@@ -99,6 +99,16 @@ function LinkRow({ link, highlighted, onRemove }: { link: ShortUrl; highlighted:
             /{link.shortCode}
           </a>
           <StatusBadge status={status} />
+          {link.healthState === 'BROKEN' && (
+            <span className="shrink-0 rounded-full bg-danger-soft px-2 py-0.5 text-[11px] font-medium text-danger" title="The destination looks dead">
+              Broken
+            </span>
+          )}
+          {link.healthState === 'WARNING' && (
+            <span className="hidden shrink-0 rounded-full bg-warn-soft px-2 py-0.5 text-[11px] font-medium text-warn sm:inline" title="The destination needs attention">
+              Check link
+            </span>
+          )}
         </div>
         <p className="mt-1 truncate text-[13px] text-muted" title={link.originalUrl}>
           {displayUrl(link.originalUrl)}

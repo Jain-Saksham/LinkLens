@@ -13,12 +13,14 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * this annotation shares one Spring context (identical configuration), so containers start once.
  * Skipped automatically when Docker isn't available.
  *
- * <p>Rate limiting is off here (all requests come from 127.0.0.1); it has its own tests.
+ * <p>Rate limiting is off here (all requests come from 127.0.0.1); it has its own tests. The health
+ * scheduler is off (no background calls to real sites), and loopback targets are allowed so health
+ * tests can point links at a local HTTP server. Never enable allow-loopback outside tests.
  */
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = "app.rate-limit.enabled=false")
+        properties = {"app.rate-limit.enabled=false", "app.health.enabled=false", "app.health.allow-loopback=true"})
 @Import({PostgresTestConfig.class, RedisTestConfig.class})
 @Testcontainers(disabledWithoutDocker = true)
 public @interface IntegrationTest {

@@ -9,5 +9,7 @@ public record ShortUrlResponse(
         boolean customAlias,
         long clickCount,
         Instant createdAt,
-        Instant expiresAt) {
+        Instant expiresAt,
+        /** PENDING | HEALTHY | WARNING | BROKEN: whether the destination still works. */
+        String healthState) {
 }

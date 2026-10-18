@@ -10,6 +10,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.linklens.live.LiveClickRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.util.List;
@@ -27,11 +28,12 @@ class ClickRecorderTest {
 
     private final JdbcTemplate jdbc = mock(JdbcTemplate.class);
     private final SimpleMeterRegistry meters = new SimpleMeterRegistry();
+    private final LiveClickRegistry live = mock(LiveClickRegistry.class);
 
     @Test
     @SuppressWarnings("unchecked")
     void writesOneInsertBatchAndOneAggregatedIncrementPerLink() {
-        ClickRecorder recorder = new ClickRecorder(jdbc, TransactionOperations.withoutTransaction(), meters, 100);
+        ClickRecorder recorder = new ClickRecorder(jdbc, TransactionOperations.withoutTransaction(), live, meters, 100);
         recorder.record(2L, "a.com", AT);
         recorder.record(1L, null, AT);
         recorder.record(2L, null, AT);
@@ -50,7 +52,7 @@ class ClickRecorderTest {
 
     @Test
     void largeBacklogsAreWrittenInBoundedBatches() {
-        ClickRecorder recorder = new ClickRecorder(jdbc, TransactionOperations.withoutTransaction(), meters, 5_000);
+        ClickRecorder recorder = new ClickRecorder(jdbc, TransactionOperations.withoutTransaction(), live, meters, 5_000);
         for (int i = 0; i < 2_500; i++) {
             recorder.record(1L, null, AT);
         }
@@ -61,7 +63,7 @@ class ClickRecorderTest {
 
     @Test
     void dropsAndCountsClicksWhenTheQueueIsFullInsteadOfBlocking() {
-        ClickRecorder recorder = new ClickRecorder(jdbc, TransactionOperations.withoutTransaction(), meters, 2);
+        ClickRecorder recorder = new ClickRecorder(jdbc, TransactionOperations.withoutTransaction(), live, meters, 2);
         recorder.record(1L, null, AT);
         recorder.record(1L, null, AT);
         recorder.record(1L, null, AT);
@@ -75,7 +77,7 @@ class ClickRecorderTest {
         when(jdbc.batchUpdate(eq(INSERT), anyList()))
                 .thenThrow(new CannotGetJdbcConnectionException("db down"))
                 .thenReturn(new int[0]);
-        ClickRecorder recorder = new ClickRecorder(jdbc, TransactionOperations.withoutTransaction(), meters, 100);
+        ClickRecorder recorder = new ClickRecorder(jdbc, TransactionOperations.withoutTransaction(), live, meters, 100);
 
         recorder.record(1L, null, AT);
         assertThat(recorder.flush()).isZero();
@@ -87,7 +89,7 @@ class ClickRecorderTest {
 
     @Test
     void emptyQueueDoesNoDatabaseWork() {
-        new ClickRecorder(jdbc, TransactionOperations.withoutTransaction(), meters, 10).flush();
+        new ClickRecorder(jdbc, TransactionOperations.withoutTransaction(), live, meters, 10).flush();
         verify(jdbc, never()).batchUpdate(anyString(), anyList());
     }
 }

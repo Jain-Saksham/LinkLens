@@ -10,6 +10,8 @@ import com.linklens.exception.AliasUnavailableException;
 import com.linklens.exception.InvalidUrlException;
 import com.linklens.exception.ShortUrlExpiredException;
 import com.linklens.exception.ShortUrlNotFoundException;
+import com.linklens.health.LinkHealthRepository;
+import com.linklens.health.StoredHealth;
 import com.linklens.repository.ShortUrlRepository;
 import java.net.URI;
 import java.time.Clock;
@@ -20,6 +22,7 @@ import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionOperations;
 
 @Service
 public class ShortUrlService {
@@ -36,25 +39,31 @@ public class ShortUrlService {
     private final ShortCodeGenerator codeGenerator;
     private final ShortUrlCache cache;
     private final ClickRecorder clickRecorder;
+    private final LinkHealthRepository healthRepository;
+    private final TransactionOperations tx;
     private final AppProperties properties;
     private final Clock clock;
     private final String ownHost;
 
     public ShortUrlService(ShortUrlRepository repository, ShortCodeGenerator codeGenerator, ShortUrlCache cache,
-                           ClickRecorder clickRecorder, AppProperties properties, Clock clock) {
+                           ClickRecorder clickRecorder, LinkHealthRepository healthRepository,
+                           TransactionOperations tx, AppProperties properties, Clock clock) {
         this.repository = repository;
         this.codeGenerator = codeGenerator;
         this.cache = cache;
         this.clickRecorder = clickRecorder;
+        this.healthRepository = healthRepository;
+        this.tx = tx;
         this.properties = properties;
         this.clock = clock;
         this.ownHost = URI.create(properties.normalizedBaseUrl()).getHost();
     }
 
     /**
-     * Deliberately not {@code @Transactional}: each insert attempt commits (or fails) on its own, so
-     * a unique-constraint failure can be retried with a fresh code, and the cache is only written
-     * after the row is committed (never caching data that might roll back).
+     * Deliberately not {@code @Transactional} as a whole: each insert attempt is its own short
+     * transaction (link + its pending health row), so a unique-constraint failure can be retried with a
+     * fresh code, and the cache is only written after the row is committed (never caching data that
+     * might roll back).
      */
     public ShortUrlResponse create(CreateShortUrlRequest request) {
         String url = request.url().trim();
@@ -66,12 +75,14 @@ public class ShortUrlService {
 
         // Write-through: also replaces a cached "not found" for this code.
         cache.put(saved.getShortCode(), toCached(saved));
-        return toResponse(saved);
+        return toResponse(saved, StoredHealth.HealthState.PENDING.name());
     }
 
     @Transactional(readOnly = true)
     public ShortUrlResponse getDetails(String shortCode) {
-        return toResponse(findOrThrow(shortCode));
+        ShortUrl link = findOrThrow(shortCode);
+        String health = healthRepository.find(link.getId()).map(h -> h.state().name()).orElse(null);
+        return toResponse(link, health);
     }
 
     /** Resolves a code to its destination and records the click (asynchronously). */
@@ -112,7 +123,7 @@ public class ShortUrlService {
             throw new AliasUnavailableException(alias);
         }
         try {
-            return repository.saveAndFlush(new ShortUrl(alias, url, true, Instant.now(clock), expiresAt));
+            return insert(new ShortUrl(alias, url, true, Instant.now(clock), expiresAt));
         } catch (DataIntegrityViolationException e) {
             if (isShortCodeConflict(e)) {
                 throw new AliasUnavailableException(alias);
@@ -126,7 +137,7 @@ public class ShortUrlService {
         for (int attempt = 0; attempt < MAX_GENERATION_ATTEMPTS; attempt++) {
             String candidate = codeGenerator.generate();
             try {
-                return repository.saveAndFlush(new ShortUrl(candidate, url, false, Instant.now(clock), expiresAt));
+                return insert(new ShortUrl(candidate, url, false, Instant.now(clock), expiresAt));
             } catch (DataIntegrityViolationException e) {
                 if (!isShortCodeConflict(e)) {
                     throw e;
@@ -135,6 +146,15 @@ public class ShortUrlService {
         }
         throw new IllegalStateException("Could not generate a unique short code after "
                 + MAX_GENERATION_ATTEMPTS + " attempts");
+    }
+
+    /** Link and health row commit together; a constraint violation rolls back both and propagates. */
+    private ShortUrl insert(ShortUrl link) {
+        return tx.execute(status -> {
+            ShortUrl saved = repository.saveAndFlush(link);
+            healthRepository.createPending(saved.getId());
+            return saved;
+        });
     }
 
     /** Only a duplicate short code is a conflict; any other integrity failure is a real bug. */
@@ -159,7 +179,7 @@ public class ShortUrlService {
         return new CachedLink(s.getId(), s.getOriginalUrl(), s.getExpiresAt());
     }
 
-    private ShortUrlResponse toResponse(ShortUrl s) {
+    private ShortUrlResponse toResponse(ShortUrl s, String healthState) {
         return new ShortUrlResponse(
                 s.getShortCode(),
                 properties.normalizedBaseUrl() + "/" + s.getShortCode(),
@@ -167,6 +187,7 @@ public class ShortUrlService {
                 s.isCustomAlias(),
                 s.getClickCount(),
                 s.getCreatedAt(),
-                s.getExpiresAt());
+                s.getExpiresAt(),
+                healthState);
     }
 }

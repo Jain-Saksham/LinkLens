@@ -210,3 +210,111 @@ One single-series column chart is ~150 lines of SVG. A library would add ~100 kB
 - Tooltips repeat values that are also in a table view.
 - Colors were checked for contrast in both themes.
 - Status in insights is never color alone: each one has an icon and a text label.
+
+---
+
+## 11. Link-rot monitoring
+
+- **Problem:** links quietly die (404s, dead domains, parked pages) and owners never find out.
+- **Alternatives:**
+  - Check on every redirect: adds latency, and leaks a fetch per click.
+  - A cron script over all links: not multi-instance safe, and no backoff.
+  - A paid uptime service.
+- **Choice:** a `link_health` row per link with `next_check_at`.
+  - The scheduler claims due rows with `FOR UPDATE SKIP LOCKED` and a 10-minute lease, then checks them in parallel on virtual threads (8 at once).
+  - A pure `HealthEvaluator` decides the state. One failure is a WARNING; 2 in a row is BROKEN.
+  - Backoff runs 15m → 30m → … → 24h with ±10% jitter.
+  - Bot walls (401/403/429, LinkedIn's 999) are "unverifiable", never "broken".
+  - A Jaccard word overlap under 30% against the first title seen flags "the page was replaced".
+- **Trade-offs:**
+  - Detection lags by up to a day for healthy links, by design.
+  - The title heuristic can miss subtle content changes.
+  - Checks reveal LinkLens's IP to destinations.
+
+**Q: How do multiple instances avoid checking the same link twice?**
+`UPDATE … WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED LIMIT n) RETURNING …`. Each instance locks a different set of rows, and locked rows are skipped instead of waited on. The update pushes `next_check_at` forward as a lease and commits straight away, so the HTTP calls happen outside any transaction. A crashed instance's links become due again when the lease runs out. An integration test runs two concurrent claims and asserts they get disjoint sets.
+
+**Q: How do you avoid false alarms?**
+Four ways:
+- Debounce: BROKEN needs consecutive failures, and one success resets the count.
+- Classify carefully: 403/429/999 mean "couldn't verify", and private-network targets are "blocked".
+- Real-world testing found LinkedIn's non-standard 999. Without that rule, a perfectly good profile link would have been flagged as dead.
+- Back off with jitter, so a briefly-down site isn't hammered and checks don't synchronise.
+
+---
+
+## 12. SSRF-safe fetching
+
+- **Problem:** the server now fetches URLs strangers submit, the textbook SSRF setup (cloud metadata, internal admin ports, Redis).
+- **Alternatives:**
+  - Validate the URL's host before fetching: vulnerable to DNS rebinding and to redirects.
+  - A blocklist of hostnames: trivially bypassed with IP encodings or DNS.
+  - A third-party fetch proxy: costs money and adds a dependency.
+- **Choice:**
+  - An allow-list of *globally routable* addresses, enforced inside the HTTP client's `DnsResolver`, so validation and connection use the same resolved IPs.
+  - Redirects followed manually, each hop re-validated.
+  - http(s) only; per-hop and total timeouts; read only HTML and only up to `</title>` (1 MiB cap); no cookies, credentials or proxy.
+- **Trade-offs:**
+  - A few legitimate intranet links can't be checked; they're shown as "blocked", not "broken".
+  - An app-level guard is defence in depth. Production should also deny egress to internal networks.
+
+**Q: Why isn't "resolve, check, then fetch" enough?**
+Two gaps:
+- **Time-of-check to time-of-use:** the attacker's DNS can return a public IP to your check and `127.0.0.1` to the HTTP client's own lookup a millisecond later. This is DNS rebinding.
+- **Redirects:** a public URL can 302 to `http://169.254.169.254/`.
+
+Putting the check in the client's resolver closes both: the connection uses exactly the addresses that were validated, on every hop. Tests prove a redirect into the metadata IP is never requested, and that `localhost` is blocked via DNS, not just as a literal.
+
+**Q: Which ranges do you block, and what are the tricky ones?**
+Loopback, `0/8`, RFC 1918, link-local (`169.254/16`, where the metadata service lives), CGNAT `100.64/10`, multicast and broadcast, IPv6 ULA `fc00::/7`, and documentation/benchmark ranges. The tricky ones are IPv4 hidden in IPv6, such as `::ffff:127.0.0.1` and NAT64 `64:ff9b::a9fe:a9fe`, which the policy unwraps and re-checks. 38 cases are unit-tested.
+
+---
+
+## 13. Transparent preview page (`/{code}+`)
+
+- **Problem:** short links hide their destination, so people rightly distrust them.
+- **Alternatives:**
+  - A preview in the React app: lives on a different origin, and needs JavaScript to show anything.
+  - An interstitial on every redirect: annoys every visitor.
+- **Choice:**
+  - Server-rendered HTML on the short-link domain, with no JavaScript.
+  - It shows the real host prominently, the final URL after redirects, the chain, the page title, HTTPS, health and expiry.
+  - It reuses the stored inspection (fresh within 6 h). Otherwise it starts or joins one check, waits 2.5 s, and falls back to "Checking…" with a meta refresh.
+- **Trade-offs:**
+  - A hand-rolled template (one page didn't justify a template engine) needs careful escaping, which is covered by tests and a CSP.
+  - A stored result can be up to 6 h old.
+
+**Q: How do you stop the preview from being an XSS vector?**
+- Titles and URLs from third-party sites are escaped on output.
+- The template is filled in a single pass, because chained `replace()` calls would expand a `{{placeholder}}` that arrives inside a title.
+- CSP `default-src 'none'` with no script sources, so even a missed escape can't execute.
+- `frame-ancestors 'none'` prevents clickjacking.
+
+**Q: Can attackers use the preview to make LinkLens attack other sites?**
+The volume is bounded:
+- Previews reuse stored results for 6 h, and concurrent viewers join one in-flight check (`putIfAbsent` on a future).
+- Each link costs at most one outbound request per window, and creating links is rate-limited.
+- Manual "check now" has its own rate limit plus a 60 s per-link cooldown.
+
+---
+
+## 14. Live click counter (Server-Sent Events)
+
+- **Problem:** watching clicks arrive in real time.
+- **Alternatives:**
+  - Polling: simple, but laggy and wasteful.
+  - WebSockets: two-way and heavier, when the data flows one way.
+  - Long-polling.
+- **Choice:**
+  - SSE (`SseEmitter`). After each click batch **commits**, the recorder asks the registry which changed links have viewers, reads only those totals in one query, and the registry pushes them from its own thread.
+  - Caps of 50 per link and 1,000 per instance, a 20 s heartbeat, and a 30 min timeout (`EventSource` reconnects automatically).
+  - The frontend folds live counts into the loaded snapshot (total, period, today's bar) with a pure, tested function.
+- **Trade-offs:**
+  - Per instance only. Multiple instances would need Redis pub/sub to fan out.
+  - Browsers allow ~6 HTTP/1.1 connections per origin, so streams are used only on focused views (analytics page, the just-created link), never on every list row.
+
+**Q: Why publish after the commit instead of on each click?**
+On each click you'd show counts that might roll back, and you'd add work to the redirect path. After the commit there's one message per link per batch (≤ 5/s), only for links someone is watching. When nobody watches (the common case) it costs no query at all.
+
+**Q: What breaks with three instances behind a load balancer?**
+A viewer connected to instance A doesn't see clicks recorded by instance B. The fix: after its commit, each instance publishes `link 42 changed` on a Redis channel; every instance subscribes and pushes to its own viewers. If Redis is down, the UI degrades to its Refresh button.
