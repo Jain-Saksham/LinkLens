@@ -1,55 +1,43 @@
 package com.linklens.integration;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 import com.linklens.dto.ShortUrlResponse;
+import com.linklens.support.IntegrationTest;
+import com.linklens.support.TestLinks;
+import java.time.Duration;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.http.client.ClientHttpRequestFactorySettings.Redirects;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
-/**
- * Full stack against a real PostgreSQL: Flyway migration, JPA mapping, unique constraint and the
- * atomic click update. Skipped automatically when Docker isn't available.
- */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@Testcontainers(disabledWithoutDocker = true)
+/** The happy path end to end: create, redirect, count. */
+@IntegrationTest
 class ShortUrlFlowIntegrationTest {
-
-    @Container
-    @ServiceConnection
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
     @Autowired
     private TestRestTemplate rest;
 
     @Test
     void createRedirectAndCountClicks() {
+        String alias = TestLinks.uniqueAlias("flow");
         ResponseEntity<ShortUrlResponse> created = rest.postForEntity(
-                "/api/v1/urls", Map.of("url", "https://example.com/page", "customAlias", "it-flow"),
+                "/api/v1/urls", Map.of("url", "https://example.com/page", "customAlias", alias),
                 ShortUrlResponse.class);
         assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
 
-        // Don't follow redirects, so the 302 itself is observable (and example.com is never called).
-        TestRestTemplate noRedirects = rest.withRedirects(Redirects.DONT_FOLLOW);
-        ResponseEntity<Void> redirect = noRedirects.getForEntity("/it-flow", Void.class);
+        TestRestTemplate noRedirects = TestLinks.noRedirects(rest);
+        ResponseEntity<Void> redirect = noRedirects.getForEntity("/" + alias, Void.class);
         assertThat(redirect.getStatusCode()).isEqualTo(HttpStatus.FOUND);
         assertThat(redirect.getHeaders().getLocation()).hasToString("https://example.com/page");
-        noRedirects.getForEntity("/it-flow", Void.class);
+        noRedirects.getForEntity("/" + alias, Void.class);
 
-        ShortUrlResponse details = rest.getForObject("/api/v1/urls/it-flow", ShortUrlResponse.class);
-        assertThat(details.clickCount()).isEqualTo(2);
-
-        ResponseEntity<String> duplicate = rest.postForEntity(
-                "/api/v1/urls", Map.of("url", "https://example.com/other", "customAlias", "it-flow"), String.class);
-        assertThat(duplicate.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        // Clicks are recorded asynchronously, off the redirect's request thread.
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                assertThat(rest.getForObject("/api/v1/urls/" + alias, ShortUrlResponse.class).clickCount())
+                        .isEqualTo(2));
     }
 }

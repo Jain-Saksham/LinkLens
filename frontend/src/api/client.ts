@@ -65,3 +65,26 @@ export function createShortUrl(body: CreateShortUrlRequest): Promise<ShortUrl> {
 export function getShortUrl(shortCode: string): Promise<ShortUrl> {
   return request<ShortUrl>(`/api/v1/urls/${encodeURIComponent(shortCode)}`);
 }
+
+export type InsightSeverity = 'POSITIVE' | 'NEUTRAL' | 'WARNING';
+
+export interface Analytics {
+  shortCode: string;
+  shortUrl: string;
+  originalUrl: string;
+  createdAt: string;
+  expiresAt: string | null;
+  totalClicks: number;
+  periodDays: number;
+  periodClicks: number;
+  /** One entry per UTC day, oldest first, zero-filled. `date` is yyyy-MM-dd. */
+  daily: { date: string; clicks: number }[];
+  /** "Direct" = no usable referrer; "Other" = everything outside the top sources. */
+  referrers: { source: string; clicks: number; share: number }[];
+  insights: { type: string; severity: InsightSeverity; title: string; message: string }[];
+  generatedAt: string;
+}
+
+export function getAnalytics(shortCode: string, days: number): Promise<Analytics> {
+  return request<Analytics>(`/api/v1/urls/${encodeURIComponent(shortCode)}/analytics?days=${days}`);
+}

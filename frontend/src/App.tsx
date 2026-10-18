@@ -1,19 +1,11 @@
-import { useState } from 'react';
-import type { ShortUrl } from './api/client';
 import { ApertureLogo } from './components/icons';
-import { RecentLinks } from './components/RecentLinks';
-import { ResultCard } from './components/ResultCard';
-import { ShortenForm } from './components/ShortenForm';
-import { useLinkHistory } from './hooks/useLinkHistory';
+import { onLinkClick, useRoute } from './lib/router';
+import { AnalyticsPage } from './pages/AnalyticsPage';
+import { HomePage } from './pages/HomePage';
 
 export default function App() {
-  const history = useLinkHistory();
-  const [latest, setLatest] = useState<ShortUrl | null>(null);
-
-  function handleCreated(link: ShortUrl) {
-    setLatest(link);
-    history.add(link);
-  }
+  const route = useRoute();
+  const wide = route.name === 'analytics';
 
   return (
     <div className="relative min-h-dvh overflow-x-hidden">
@@ -24,50 +16,33 @@ export default function App() {
         className="pointer-events-none absolute left-1/2 top-[-180px] size-[520px] -translate-x-1/2 rounded-full bg-accent opacity-[0.07] blur-3xl"
       />
 
-      <div className="relative mx-auto flex min-h-dvh max-w-3xl flex-col px-4 sm:px-6">
+      <div className={`relative mx-auto flex min-h-dvh flex-col px-4 sm:px-6 ${wide ? 'max-w-5xl' : 'max-w-3xl'}`}>
         <header className="flex items-center justify-between py-6">
-          <a href="/" className="flex items-center gap-2.5" aria-label="LinkLens home">
+          <a href="/" onClick={onLinkClick('/')} className="flex items-center gap-2.5" aria-label="LinkLens home">
             <ApertureLogo />
             <span className="text-[17px] font-semibold tracking-tight text-ink">LinkLens</span>
           </a>
           <span className="rounded-full border border-line bg-surface/70 px-3 py-1 font-mono text-[11px] text-muted backdrop-blur">
-            v0.1
+            v0.2
           </span>
         </header>
 
-        <main className="flex-1 pb-16">
-          <section className="pb-10 pt-10 text-center sm:pb-12 sm:pt-16">
-            <h1 className="font-display text-[52px] leading-[0.95] tracking-tight text-ink sm:text-[76px]">
-              Long links,
-              <br />
-              <em className="text-accent">brought into focus.</em>
-            </h1>
-            <p className="mx-auto mt-5 max-w-md text-[15px] leading-relaxed text-ink-soft sm:text-base">
-              Shorten any URL in a keystroke. Pick your own alias, set it to expire, and see how often it’s
-              clicked.
-            </p>
-          </section>
-
-          <div className="space-y-4">
-            <ShortenForm onCreated={handleCreated} />
-            {latest && <ResultCard key={latest.shortCode} link={latest} onDismiss={() => setLatest(null)} />}
-          </div>
-
-          <div className="mt-16">
-            <RecentLinks
-              items={history.items}
-              refreshing={history.refreshing}
-              highlight={latest?.shortCode}
-              onRefresh={history.refresh}
-              onRemove={history.remove}
-              onClear={history.clear}
-            />
-          </div>
+        <main className="flex-1">
+          {route.name === 'home' && <HomePage />}
+          {route.name === 'analytics' && <AnalyticsPage key={route.code} code={route.code} />}
+          {route.name === 'not-found' && (
+            <div className="py-24 text-center">
+              <p className="font-display text-5xl text-ink">Page not found</p>
+              <a href="/" onClick={onLinkClick('/')} className="mt-6 inline-block text-sm font-medium text-accent hover:underline">
+                ← Back home
+              </a>
+            </div>
+          )}
         </main>
 
         <footer className="flex flex-col items-center justify-between gap-2 border-t border-line py-6 text-xs text-muted sm:flex-row">
           <span>LinkLens — a small, focused URL shortener.</span>
-          <span className="font-mono">Spring Boot · PostgreSQL · React</span>
+          <span className="font-mono">Spring Boot · PostgreSQL · Redis · React</span>
         </footer>
       </div>
     </div>

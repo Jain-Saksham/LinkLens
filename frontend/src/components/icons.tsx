@@ -48,6 +48,12 @@ export const RefreshIcon = (p: IconProps) => (
   </svg>
 );
 
+export const ChartIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M4 20h16M7 16v-5M12 16V7M17 16v-8" />
+  </svg>
+);
+
 export const XIcon = (p: IconProps) => (
   <svg {...base(p)}>
     <path d="M6 6l12 12M18 6 6 18" />

@@ -9,6 +9,19 @@ spring:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/linklens}
     username: ${DB_USERNAME:postgres}
     password: ${DB_PASSWORD:postgres}
+    hikari:
+      # Fail fast when the database is unreachable (default is 30s per request).
+      connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:3000}   # milliseconds (Hikari takes a plain long)
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+      data-source-properties:
+        # Turns JDBC batches into multi-row INSERTs (used by the click flusher).
+        reWriteBatchedInserts: true
+  data:
+    redis:
+      url: ${REDIS_URL:redis://localhost:6379}
+      # Redis is an optimisation: a slow or dead Redis must cost milliseconds, not seconds.
+      timeout: ${REDIS_TIMEOUT:250ms}
+      connect-timeout: ${REDIS_TIMEOUT:250ms}
   jpa:
     open-in-view: false
     hibernate:
@@ -18,17 +31,37 @@ spring:
   mvc:
     problemdetails:
       enabled: true
+  lifecycle:
+    timeout-per-shutdown-phase: 15s
 
 server:
   port: ${SERVER_PORT:8080}
+  shutdown: graceful
+  # Behind a reverse proxy, set to "native" or "framework" so the real client IP (used for rate
+  # limiting) comes from X-Forwarded-For. Left off by default: trusting that header without a proxy
+  # would let any client pick its own rate-limit key.
+  forward-headers-strategy: ${FORWARD_HEADERS_STRATEGY:none}
 
 app:
   base-url: ${APP_BASE_URL:http://localhost:8080}
   short-code-length: ${SHORT_CODE_LENGTH:7}
   cors-allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
+  cache:
+    enabled: ${CACHE_ENABLED:true}
+    ttl: ${CACHE_TTL:1h}
+    negative-ttl: ${CACHE_NEGATIVE_TTL:60s}
+    failure-backoff: ${CACHE_FAILURE_BACKOFF:30s}
+  rate-limit:
+    enabled: ${RATE_LIMIT_ENABLED:true}
+    capacity: ${RATE_LIMIT_CAPACITY:20}
+    refill-period: ${RATE_LIMIT_REFILL_PERIOD:1m}
 
 management:
   endpoints:
     web:
       exposure:
-        include: health
+        include: ${MANAGEMENT_ENDPOINTS:health}
+  health:
+    # Redis is an optional cache (the app fails open without it), so it must not mark the app DOWN.
+    redis:
+      enabled: false

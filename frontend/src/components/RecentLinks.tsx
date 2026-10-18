@@ -1,7 +1,8 @@
 import type { ShortUrl } from '../api/client';
 import { displayUrl, formatCount, formatRelative, linkStatus } from '../lib/format';
 import { CopyButton } from './CopyButton';
-import { ArrowUpRightIcon, RefreshIcon, XIcon } from './icons';
+import { analyticsPath, onLinkClick } from '../lib/router';
+import { ArrowUpRightIcon, ChartIcon, RefreshIcon, XIcon } from './icons';
 
 interface Props {
   items: ShortUrl[];
@@ -117,6 +118,15 @@ function LinkRow({ link, highlighted, onRemove }: { link: ShortUrl; highlighted:
       </div>
 
       <div className="col-start-2 row-span-2 row-start-1 flex items-center gap-0.5 sm:col-start-3 sm:row-span-1">
+        <a
+          href={analyticsPath(link.shortCode)}
+          onClick={onLinkClick(analyticsPath(link.shortCode))}
+          aria-label={`Analytics for ${link.shortCode}`}
+          title="Analytics"
+          className="grid size-8 place-items-center rounded-full text-muted transition hover:bg-surface-sunk hover:text-ink"
+        >
+          <ChartIcon />
+        </a>
         <CopyButton text={link.shortUrl} />
         <a
           href={link.shortUrl}

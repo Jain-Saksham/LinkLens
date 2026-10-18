@@ -1,7 +1,8 @@
 import type { ShortUrl } from '../api/client';
 import { displayUrl, formatRelative } from '../lib/format';
 import { CopyButton } from './CopyButton';
-import { ArrowUpRightIcon, CheckIcon, XIcon } from './icons';
+import { analyticsPath, onLinkClick } from '../lib/router';
+import { ArrowUpRightIcon, ChartIcon, CheckIcon, XIcon } from './icons';
 
 interface Props {
   link: ShortUrl;
@@ -64,6 +65,14 @@ export function ResultCard({ link, onDismiss }: Props) {
           >
             Open
             <ArrowUpRightIcon />
+          </a>
+          <a
+            href={analyticsPath(link.shortCode)}
+            onClick={onLinkClick(analyticsPath(link.shortCode))}
+            className="inline-flex h-11 items-center gap-2 rounded-full px-4 text-sm font-medium text-ink-soft transition hover:text-ink"
+          >
+            <ChartIcon />
+            Analytics
           </a>
           <span className="ml-auto text-xs text-muted">
             {link.expiresAt ? `Expires ${formatRelative(link.expiresAt)}` : 'Never expires'}
